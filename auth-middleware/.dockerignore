@@ -1,6 +1,9 @@
-build/
-.gradle/
-.idea/
-.vscode/
-*.iml
 .git
+.gradle
+build/
+!build/libs/*.jar
+*.md
+Dockerfile
+.dockerignore
+k8s/
+scripts/

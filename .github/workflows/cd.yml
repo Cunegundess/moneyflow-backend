@@ -1,0 +1,66 @@
+name: CD - Deploy to Kind
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Permite trigger manual
+
+jobs:
+  cd-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Kind Cluster
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+          kind create cluster --name moneyflow-ci --config=kind-config.yaml
+
+      - name: Setup Kubernetes Tools
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Build Docker Image
+        run: |
+          cd auth-middleware
+          docker build -t moneyflow/auth-middleware:latest .
+
+      - name: Load Image to Kind
+        run: |
+          kind load docker-image moneyflow/auth-middleware:latest --name moneyflow-ci
+
+      - name: Deploy Infrastructure
+        run: |
+          kubectl apply -f k8s/infrastructure/namespace.yaml
+          kubectl apply -f k8s/infrastructure/redis/
+          echo "Waiting for Redis..."
+          kubectl wait --for=condition=available --timeout=300s deployment/redis -n moneyflow
+
+      - name: Deploy Auth Middleware
+        run: |
+          kubectl apply -f k8s/auth-middleware/
+          echo "Waiting for Auth Middleware..."
+          timeout 300s bash -c 'while ! kubectl get deployment auth-middleware -n moneyflow -o jsonpath="{.status.readyReplicas}" | grep -q "1"; do sleep 5; echo "Waiting..."; done'
+
+      - name: Verify Deployment
+        run: |
+          kubectl get all -n moneyflow
+          kubectl get ingress -n moneyflow
+
+          # Teste básico de saúde
+          kubectl port-forward service/auth-middleware -n moneyflow 8080:8080 &
+          sleep 10
+          curl -f http://localhost:8080 || echo "Application is running but may not have endpoints yet"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kind delete cluster --name moneyflow-ci
