@@ -1,0 +1,40 @@
+name: CI - Build and Test
+
+on:
+  push:
+    branches: [main, feature/**]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Build and Test Auth Middleware
+        run: |
+          cd auth-middleware
+          ./gradlew build --no-daemon
+          ./gradlew test --no-daemon
+
+      - name: Build Docker Image
+        run: |
+          cd auth-middleware
+          docker build -t auth-middleware:ci-${{ github.sha }} .
+
+      - name: Security Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "auth-middleware:ci-${{ github.sha }}"
+          format: "table"
+          exit-code: "0" # Não falha o build, só reporta
+          ignore-unfixed: true
